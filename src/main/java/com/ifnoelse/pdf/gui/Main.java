@@ -3,162 +3,307 @@ package com.ifnoelse.pdf.gui;
 import com.ifnoelse.pdf.PDFContents;
 import com.ifnoelse.pdf.PDFUtil;
 import com.itextpdf.text.exceptions.BadPasswordException;
-import javafx.application.Application;
-import javafx.geometry.Pos;
-import javafx.scene.Scene;
-import javafx.scene.control.Alert;
-import javafx.scene.control.Button;
-import javafx.scene.control.TextArea;
-import javafx.scene.control.TextField;
-import javafx.scene.input.Dragboard;
-import javafx.scene.layout.BorderPane;
-import javafx.scene.layout.HBox;
-import javafx.stage.FileChooser;
-import javafx.stage.Stage;
 
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
+import java.awt.*;
+import java.awt.datatransfer.DataFlavor;
+import java.awt.dnd.DnDConstants;
+import java.awt.dnd.DropTarget;
+import java.awt.dnd.DropTargetDropEvent;
+import java.awt.event.*;
 import java.io.File;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.List;
 
 /**
  * Created by ifnoelse on 2017/3/2 0002.
  */
-public class Main extends Application {
+public class Main {
+
+    private static final String ERROR_TITLE = "错误";
+    private static final String INFO_TITLE = "通知";
 
     public static void main(String[] args) {
-        launch(args);
+        SwingUtilities.invokeLater(Main::createAndShowGUI);
     }
 
-    @Override
-    public void start(Stage primaryStage) throws Exception {
-        primaryStage.setTitle("pdf bookmark");
+    private static void createAndShowGUI() {
+        JFrame frame = new JFrame("PDF书签工具");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(600, 400);
+        frame.setLocationRelativeTo(null); // 居中显示
 
-        BorderPane bottomPane = new BorderPane();
-        Button contentsGenerator = new Button("生成目录");
-        Button getContents = new Button("获取目录");
+        // 创建主面板
+        JPanel mainPanel = createMainPanel(frame);
 
-        getContents.setDisable(true);
-        HBox h = new HBox(20, getContents, contentsGenerator);
+        frame.getContentPane().add(mainPanel);
+        frame.setVisible(true);
+    }
 
-        h.setAlignment(Pos.CENTER);
+    private static JPanel createMainPanel(JFrame frame) {
+        JPanel mainPanel = new JPanel(new BorderLayout());
+        mainPanel.setBorder(new EmptyBorder(10, 10, 10, 10));
 
-        bottomPane.setCenter(h);
+        // 顶部面板 - 文件选择区域
+        TopPanelComponents topPanelComponents = createTopPanel(frame);
+        mainPanel.add(topPanelComponents.topPanel, BorderLayout.NORTH);
 
-        Button fileSelectorBtn = new Button("选择文件");
+        // 中部面板 - 目录内容输入区域
+        JTextArea textArea = new JTextArea();
+        textArea.setPlaceholder("请在此填入目录内容");
+        JScrollPane scrollPane = new JScrollPane(textArea);
+        mainPanel.add(scrollPane, BorderLayout.CENTER);
 
+        // 底部面板 - 操作按钮区域
+        JPanel bottomPanel = createBottomPanel(textArea, topPanelComponents.filePathField, topPanelComponents.pageIndexOffset, frame);
+        mainPanel.add(bottomPanel, BorderLayout.SOUTH);
 
-        BorderPane vBox = new BorderPane();
-        TextField filePath = new TextField();
+        // 设置拖拽功能
+        setupDragAndDrop(textArea, topPanelComponents.filePathField);
 
-        filePath.setEditable(false);
-        filePath.setPromptText("请选择PDF文件");
+        // 设置文本监听器
+        setupTextListener(textArea, bottomPanel);
 
-        BorderPane topPane = new BorderPane();
-        topPane.setCenter(filePath);
+        return mainPanel;
+    }
 
+    private static TopPanelComponents createTopPanel(JFrame frame) {
+        JPanel topPanel = new JPanel(new BorderLayout());
 
-        TextField pageIndexOffset = new TextField();
-        topPane.setRight(new HBox(pageIndexOffset, fileSelectorBtn));
-        vBox.setTop(topPane);
+        // 文件路径输入框
+        JTextField filePathField = new JTextField();
+        filePathField.setEditable(false);
+        filePathField.setPlaceholder("请选择PDF文件");
+        topPanel.add(filePathField, BorderLayout.CENTER);
 
-        pageIndexOffset.setPromptText("页码偏移量");
-        pageIndexOffset.setPrefWidth(100);
+        // 页码偏移量和文件选择按钮
+        JTextField pageIndexOffset = new JTextField();
+        pageIndexOffset.setPlaceholder("页码偏移量");
+        pageIndexOffset.setPreferredSize(new Dimension(100, 25));
+        JButton fileSelectorBtn = new JButton("选择文件");
 
+        JPanel rightTopPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 5, 5));
+        rightTopPanel.add(pageIndexOffset);
+        rightTopPanel.add(fileSelectorBtn);
+        topPanel.add(rightTopPanel, BorderLayout.EAST);
 
-        TextArea textArea = new TextArea();
+        // 文件选择按钮事件
+        fileSelectorBtn.addActionListener(e -> selectFile(frame, filePathField));
 
-
-        textArea.setPromptText("请在此填入目录内容");
-
-        textArea.setOnDragEntered(e -> {
-            Dragboard dragboard = e.getDragboard();
-            File file = dragboard.getFiles().get(0); //获取拖入的文件
-            String fileName = file.getName();
-            if (fileName.matches("[\\s\\S]+.[pP][dD][fF]$")) {
-                filePath.setText(file.getPath());
+        // 页码偏移量焦点监听器
+        pageIndexOffset.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                validateOffset(pageIndexOffset.getText());
             }
         });
 
+        return new TopPanelComponents(topPanel, filePathField, pageIndexOffset);
+    }
 
-        textArea.textProperty().addListener(event -> {
-            if (textArea.getText().trim().startsWith("http")) {
-                getContents.setDisable(false);
-            } else {
-                getContents.setDisable(true);
-            }
-        });
+    private static JPanel createBottomPanel(JTextArea textArea, JTextField filePathField,
+                                            JTextField pageIndexOffset, JFrame frame) {
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.CENTER, 20, 10));
 
-        vBox.setCenter(textArea);
+        JButton getContentsBtn = new JButton("获取目录");
+        JButton contentsGeneratorBtn = new JButton("生成目录");
+        getContentsBtn.setEnabled(false);
 
+        bottomPanel.add(getContentsBtn);
+        bottomPanel.add(contentsGeneratorBtn);
 
-        vBox.setBottom(bottomPane);
-        Scene scene = new Scene(vBox, 600, 400);
-        primaryStage.setScene(scene);
-
-        fileSelectorBtn.setOnAction(event -> {
-            FileChooser fileChooser = new FileChooser();
-            fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("pdf", "*.pdf"));
-            File file = fileChooser.showOpenDialog(null);
-            if (file != null) {
-                filePath.setText(file.getPath());
-            }
-
-
-        });
-
-
-        pageIndexOffset.focusedProperty().addListener((observable, oldValue, newValue) -> {
-            if (!observable.getValue()) {
-                String offset = pageIndexOffset.getText();
-                if (offset != null && offset.length() > 0 && !offset.matches("[0-9]+")) {
-                    showDialog("错误", "偏移量设置错误", "页码偏移量只能为整数", Alert.AlertType.ERROR);
-                }
-
-            }
-        });
-
-        getContents.setOnAction(event -> {
+        // 获取目录按钮事件
+        getContentsBtn.addActionListener(e -> {
             String contents = PDFContents.getContentsByUrl(textArea.getText());
             textArea.setText(contents);
         });
 
-        contentsGenerator.setOnAction(event -> {
-            String fp = filePath.getText();
-            if (fp == null || fp.isEmpty()) {
-                showDialog("错误", "pdf文件路径为空", "pdf文件路径不能为空，请选择pdf文件", Alert.AlertType.ERROR);
-                return;
-            }
-            String srcFile = fp.replaceAll("\\\\", "/");
-            String srcFileName = srcFile.substring(srcFile.lastIndexOf("/") + 1);
-            String ext = srcFileName.substring(srcFileName.lastIndexOf("."));
-            String destFile = srcFile.substring(0, srcFile.lastIndexOf(srcFileName)) + srcFileName.substring(0, srcFileName.lastIndexOf(".")) + "_含目录" + ext;
+        // 生成目录按钮事件
+        contentsGeneratorBtn.addActionListener(e -> generateBookmark(
+                textArea, filePathField, pageIndexOffset, frame));
 
-            String offset = pageIndexOffset.getText();
-            String content = textArea.getText();
-            if (content != null && !content.isEmpty()) {
-                try {
-                    PDFUtil.addBookmark(textArea.getText(), srcFile, destFile, Integer.parseInt(offset != null && !offset.isEmpty() ? offset : "0"));
-                } catch (Exception e) {
-                    String errInfo = e.toString();
-                    if (e.getCause().getClass() == BadPasswordException.class) {
-                        errInfo = "PDF已加密，无法完成修改";
-                    }
-                    showDialog("错误", "添加目录错误", errInfo, Alert.AlertType.INFORMATION);
-                    return;
-                }
-                showDialog("通知", "添加目录成功！", "文件存储在" + destFile, Alert.AlertType.INFORMATION);
-            } else {
-                showDialog("错误", "目录内容为空", "目录能容不能为空,请填写pdf书籍目录url或者填入目录文本", Alert.AlertType.ERROR);
-            }
-
-
-        });
-        primaryStage.show();
+        return bottomPanel;
     }
 
-    private void showDialog(String title, String header, String content, Alert.AlertType alertType) {
-        Alert alert = new Alert(alertType);
-        alert.setContentText(content);
-        alert.setTitle(title);
-        alert.setHeaderText(header);
-        alert.show();
+    private static void setupDragAndDrop(JTextArea textArea, JTextField filePathField) {
+        textArea.setDropTarget(new DropTarget() {
+            @Override
+            public synchronized void drop(DropTargetDropEvent dtde) {
+                try {
+                    dtde.acceptDrop(DnDConstants.ACTION_COPY);
+                    @SuppressWarnings("unchecked")
+                    List<File> files = (List<File>) dtde.getTransferable()
+                            .getTransferData(DataFlavor.javaFileListFlavor);
+                    if (!files.isEmpty()) {
+                        File file = files.get(0);
+                        String fileName = file.getName();
+                        if (fileName.toLowerCase().endsWith(".pdf")) {
+                            filePathField.setText(file.getPath());
+                        } else {
+                            showDialog(ERROR_TITLE, "文件类型错误", "仅支持PDF格式文件", JOptionPane.ERROR_MESSAGE);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                    showDialog(ERROR_TITLE, "拖放失败", "无法解析拖入的内容", JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+    }
+
+    private static void setupTextListener(JTextArea textArea, JPanel bottomPanel) {
+        textArea.getDocument().addDocumentListener(new DocumentListener() {
+            @Override
+            public void insertUpdate(DocumentEvent e) {
+                updateGetContentsButton(textArea, bottomPanel);
+            }
+
+            @Override
+            public void removeUpdate(DocumentEvent e) {
+                updateGetContentsButton(textArea, bottomPanel);
+            }
+
+            @Override
+            public void changedUpdate(DocumentEvent e) {
+                updateGetContentsButton(textArea, bottomPanel);
+            }
+        });
+    }
+
+    private static void selectFile(JFrame frame, JTextField filePathField) {
+        JFileChooser fileChooser = new JFileChooser();
+        fileChooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter("PDF文件", "pdf"));
+        int result = fileChooser.showOpenDialog(frame);
+        if (result == JFileChooser.APPROVE_OPTION) {
+            File file = fileChooser.getSelectedFile();
+            filePathField.setText(file.getPath());
+        }
+    }
+
+    private static void validateOffset(String offsetStr) {
+        if (offsetStr != null && !offsetStr.isEmpty()) {
+            for (char c : offsetStr.toCharArray()) {
+                if (!Character.isDigit(c)) {
+                    showDialog(ERROR_TITLE, "偏移量设置错误", "页码偏移量只能为整数", JOptionPane.ERROR_MESSAGE);
+                    break;
+                }
+            }
+        }
+    }
+
+    private static void updateGetContentsButton(JTextArea textArea, JPanel bottomPanel) {
+        JButton getContentsBtn = (JButton) bottomPanel.getComponent(0);
+        getContentsBtn.setEnabled(textArea.getText().trim().startsWith("http"));
+    }
+
+    private static void generateBookmark(JTextArea textArea, JTextField filePathField,
+                                         JTextField pageIndexOffset, JFrame frame) {
+        String fp = filePathField.getText();
+        if (fp == null || fp.isEmpty()) {
+            showDialog(ERROR_TITLE, "PDF文件路径为空", "PDF文件路径不能为空，请选择PDF文件", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        Path srcPath = Paths.get(fp.replace("\\", "/"));
+        String srcFileName = srcPath.getFileName().toString();
+        String baseName = srcFileName.substring(0, srcFileName.lastIndexOf('.'));
+        String extension = srcFileName.substring(srcFileName.lastIndexOf('.'));
+        Path destPath = srcPath.getParent().resolve(baseName + "_含目录" + extension);
+
+        String offsetStr = pageIndexOffset.getText();
+        int offset = 0;
+        if (offsetStr != null && !offsetStr.isEmpty()) {
+            try {
+                offset = Integer.parseInt(offsetStr);
+            } catch (NumberFormatException ex) {
+                showDialog(ERROR_TITLE, "偏移量无效", "请输入有效的整数作为页码偏移量", JOptionPane.ERROR_MESSAGE);
+                return;
+            }
+        }
+
+        String content = textArea.getText();
+        if (content == null || content.isEmpty()) {
+            showDialog(ERROR_TITLE, "目录内容为空", "目录内容不能为空，请填写PDF书籍目录URL或者填入目录文本", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            PDFUtil.addBookmark(content, srcPath.toString(), destPath.toString(), offset);
+            showDialog(INFO_TITLE, "添加目录成功！", "文件存储在" + destPath.toAbsolutePath(), JOptionPane.INFORMATION_MESSAGE);
+        } catch (Exception ex) {
+            String errInfo = ex.getMessage();
+            if (ex.getCause() instanceof BadPasswordException || ex instanceof BadPasswordException) {
+                errInfo = "PDF已加密，无法完成修改";
+            }
+            showDialog(ERROR_TITLE, "添加目录错误", errInfo, JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private static void showDialog(String title, String header, String content, int messageType) {
+        JOptionPane.showMessageDialog(null, content, title, messageType);
+    }
+
+    // 辅助类用于返回顶部面板的组件引用
+    private static class TopPanelComponents {
+        final JPanel topPanel;
+        final JTextField filePathField;
+        final JTextField pageIndexOffset;
+
+        TopPanelComponents(JPanel topPanel, JTextField filePathField, JTextField pageIndexOffset) {
+            this.topPanel = topPanel;
+            this.filePathField = filePathField;
+            this.pageIndexOffset = pageIndexOffset;
+        }
+    }
+}
+
+class JTextField extends javax.swing.JTextField {
+    private String placeholder;
+
+    public void setPlaceholder(String placeholder) {
+        this.placeholder = placeholder;
+        this.setToolTipText(placeholder);
+    }
+
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        if (getText().isEmpty() && placeholder != null) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setColor(Color.GRAY);
+                g2.setFont(getFont().deriveFont(Font.ITALIC));
+                g2.drawString(placeholder, getInsets().left, g.getFontMetrics().getAscent() + getInsets().top);
+            } finally {
+                g2.dispose();
+            }
+        }
+    }
+}
+
+class JTextArea extends javax.swing.JTextArea {
+    private String placeholder;
+
+    public void setPlaceholder(String placeholder) {
+        this.placeholder = placeholder;
+    }
+
+    @Override
+    protected void paintComponent(Graphics g) {
+        super.paintComponent(g);
+        if (getText().isEmpty() && placeholder != null) {
+            Graphics2D g2 = (Graphics2D) g.create();
+            try {
+                g2.setColor(Color.GRAY);
+                g2.setFont(getFont().deriveFont(Font.ITALIC));
+                g2.drawString(placeholder, getInsets().left, g.getFontMetrics().getAscent() + getInsets().top);
+            } finally {
+                g2.dispose();
+            }
+        }
     }
 }
